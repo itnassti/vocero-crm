@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, sql } from "drizzle-orm";
+import { and, desc, eq, gt, isNull, sql } from "drizzle-orm";
 import { getDb, schema } from "@/lib/db";
 import { scoped } from "@/lib/db/tenant";
 import { isWindowOpen, windowRemainingMs } from "@/server/inbox/window";
@@ -39,7 +39,7 @@ export async function listConversations(
       scoped(
         schema.conversation.organizationId,
         organizationId,
-        eq(schema.conversation.isTest, false),
+        isNull(schema.contact.archivedAt),
         since ? gt(schema.conversation.updatedAt, since) : undefined
       )
     )
@@ -106,6 +106,7 @@ export function serializeConversation(
   return {
     id: c.id,
     channel: c.channel,
+    simulated: c.isTest,
     contact: { id: contact.id, name: contact.name, phone: contact.phone },
     stageName,
     aiEnabled: c.aiEnabled,

@@ -6,6 +6,8 @@ export type ConversationDto = {
   id: string;
   /** 014: canal de la conversacion, para el distintivo de la bandeja. */
   channel: Channel;
+  /** Conversación simulada visible en inbox; no expone el detalle interno isTest. */
+  simulated: boolean;
   contact: { id: string; name: string; phone: string | null };
   stageName: string | null;
   aiEnabled: boolean;

@@ -1,6 +1,7 @@
-import { and, asc, eq } from "drizzle-orm";
+import { asc, eq } from "drizzle-orm";
 import { getDb, schema } from "@/lib/db";
 import { newId } from "@/lib/db/ids";
+import { scoped } from "@/lib/db/tenant";
 import { publish } from "@/server/events/bus";
 import { runAgentTurn } from "@/server/ai/pipeline";
 import { renderKb } from "@/server/ai/prompts";
@@ -166,7 +167,7 @@ async function runAllCases(
 }
 
 /** Conversa el guion completo contra el agente real; corta al primer handoff. */
-async function runConversation(
+export async function runConversation(
   organizationId: string,
   persona: Persona
 ): Promise<{
@@ -232,7 +233,7 @@ async function runConversation(
   };
 }
 
-async function upsertTestContact(
+export async function upsertTestContact(
   organizationId: string,
   persona: Persona
 ): Promise<string> {
@@ -260,16 +261,42 @@ async function upsertTestContact(
     .returning();
   if (inserted[0]) return inserted[0].id;
   const rows = await db
-    .select({ id: schema.contact.id })
+    .select({ id: schema.contact.id, archivedAt: schema.contact.archivedAt })
     .from(schema.contact)
     .where(
-      and(
-        eq(schema.contact.organizationId, organizationId),
-        eq(schema.contact.phone, persona.phone)
+      scoped(
+        schema.contact.organizationId,
+        organizationId,
+        eq(schema.contact.channel, "whatsapp"),
+        eq(schema.contact.waIdentity, persona.phone)
       )
     )
     .limit(1);
-  return rows[0]!.id;
+  const existing = rows[0];
+  if (!existing) {
+    throw new Error("No se pudo resolver el contacto del Laboratorio");
+  }
+
+  if (existing.archivedAt === null) {
+    const archived = await db
+      .update(schema.contact)
+      .set({ archivedAt: new Date() })
+      .where(
+        scoped(
+          schema.contact.organizationId,
+          organizationId,
+          eq(schema.contact.id, existing.id),
+          eq(schema.contact.channel, "whatsapp"),
+          eq(schema.contact.waIdentity, persona.phone)
+        )
+      )
+      .returning({ id: schema.contact.id });
+    if (!archived[0]) {
+      throw new Error("No se pudo archivar el contacto del Laboratorio");
+    }
+  }
+
+  return existing.id;
 }
 
 async function failRun(
