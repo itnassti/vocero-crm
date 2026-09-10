@@ -13,6 +13,10 @@ import { ConversationList } from "./conversation-list";
 import { MessageThread } from "./message-thread";
 import { Composer } from "./composer";
 import { ContactPanel } from "./contact-panel";
+import {
+  requestSimulatedMessage,
+  type SimulationMessageMode,
+} from "./composer-simulation";
 
 /**
  * Texto que ya salió del compositor pero cuyo POST todavía viaja. Existe solo
@@ -257,6 +261,16 @@ export function InboxClient({ channels }: { channels: readonly Channel[] }) {
     [refetchMessages, refetchConversations]
   );
 
+  const sendSimulatedText = useCallback(
+    (
+      conversationId: string,
+      mode: SimulationMessageMode,
+      text: string
+    ): Promise<string | null> =>
+      requestSimulatedMessage({ conversationId, mode, text }),
+    []
+  );
+
   const patchConversation = useCallback(
     async (patch: { aiEnabled?: boolean; reactivate?: boolean }) => {
       if (!selectedIdRef.current) return;
@@ -349,6 +363,7 @@ export function InboxClient({ channels }: { channels: readonly Channel[] }) {
             <Composer
               conversation={selected}
               onSend={sendText}
+              onSendSimulated={sendSimulatedText}
               onSent={() => {
                 if (selectedIdRef.current)
                   void refetchMessages(selectedIdRef.current);

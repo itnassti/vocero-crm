@@ -14,6 +14,14 @@ import type { ConversationDto, TemplateDto } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { formatBytes, formatRemaining } from "./helpers";
 import { TemplateSender } from "./template-sender";
+import {
+  DEFAULT_SIMULATION_MESSAGE_MODE,
+  composerSendTarget,
+  dispatchComposerText,
+  submitSimulatedText,
+  textAfterSimulatedSuccess,
+  type SimulationMessageMode,
+} from "./composer-simulation";
 
 /** 008 — Panel secundario del clip: formulario de ubicación o contacto. */
 type AttachPanel = "location" | "contact" | null;
@@ -33,11 +41,39 @@ function parseCoords(raw: string): { latitude: number; longitude: number } | nul
 
 export function Composer({
   conversation,
+  ...props
+}: {
+  conversation: ConversationDto;
+  onSend: (text: string) => Promise<string | null>;
+  onSendSimulated: (
+    conversationId: string,
+    mode: SimulationMessageMode,
+    text: string
+  ) => Promise<string | null>;
+  onSent: () => void;
+}) {
+  return (
+    <ConversationComposer
+      key={conversation.id}
+      conversation={conversation}
+      {...props}
+    />
+  );
+}
+
+function ConversationComposer({
+  conversation,
   onSend,
+  onSendSimulated,
   onSent,
 }: {
   conversation: ConversationDto;
   onSend: (text: string) => Promise<string | null>;
+  onSendSimulated: (
+    conversationId: string,
+    mode: SimulationMessageMode,
+    text: string
+  ) => Promise<string | null>;
   onSent: () => void;
 }) {
   const [text, setText] = useState("");
@@ -51,8 +87,18 @@ export function Composer({
   const [placeName, setPlaceName] = useState("");
   const [contactName, setContactName] = useState("");
   const [contactPhone, setContactPhone] = useState("");
+  const [simulationMode, setSimulationMode] =
+    useState<SimulationMessageMode>(DEFAULT_SIMULATION_MESSAGE_MODE);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const simulatedSendingRef = useRef(false);
+  const activeSessionRef = useRef(true);
+
+  useEffect(() => {
+    return () => {
+      activeSessionRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -100,6 +146,35 @@ export function Composer({
   async function submit() {
     setError(null);
 
+    const target = composerSendTarget(conversation.simulated, simulationMode);
+    if (target.kind === "simulated") {
+      if (!text.trim() || simulatedSendingRef.current) return;
+      setSending(true);
+      const result = await submitSimulatedText({
+        text,
+        inFlight: simulatedSendingRef,
+        send: (value) =>
+          dispatchComposerText({
+            simulated: true,
+            mode: target.mode,
+            conversationId: conversation.id,
+            text: value,
+            sendReal: onSend,
+            sendSimulated: onSendSimulated,
+          }),
+      });
+      if (!activeSessionRef.current) return;
+      setSending(false);
+      if (result.status === "ignored") return;
+      if (result.status === "error") {
+        setError(result.error);
+        return;
+      }
+      setText((current) => textAfterSimulatedSuccess(current, result.text));
+      if (taRef.current) taRef.current.style.height = "auto";
+      return;
+    }
+
     if (file) {
       // El adjunto sí espera: sube el archivo y no tiene sentido encolar otro
       // mientras tanto.
@@ -133,7 +208,14 @@ export function Composer({
     // "enviando" del hilo es la que informa el estado real.
     setText("");
     if (taRef.current) taRef.current.style.height = "auto";
-    const err = await onSend(value);
+    const err = await dispatchComposerText({
+      simulated: false,
+      mode: simulationMode,
+      conversationId: conversation.id,
+      text: value,
+      sendReal: onSend,
+      sendSimulated: onSendSimulated,
+    });
     if (err) {
       setError(err);
       // Lo que no salió vuelve al campo. Si ya empezaste a escribir otra cosa
@@ -197,7 +279,7 @@ export function Composer({
     onSent();
   }
 
-  if (!conversation.windowOpen) {
+  if (!conversation.simulated && !conversation.windowOpen) {
     return (
       <div className="border-t bg-background px-[18px] py-3.5">
         <div className="mb-3 flex items-start gap-2 rounded-md border border-warning-soft bg-warning-tint p-3 text-sm text-warning-text">
@@ -216,11 +298,45 @@ export function Composer({
     );
   }
 
-  const canSubmit = file !== null || text.trim().length > 0;
+  const canSubmit = conversation.simulated
+    ? text.trim().length > 0
+    : file !== null || text.trim().length > 0;
 
   return (
     <div className="border-t bg-background px-[18px] pb-3.5 pt-3">
-      {templates.length > 0 && !file && panel === null && (
+      {conversation.simulated && (
+        <div
+          className="mb-2 flex items-center gap-1.5"
+          role="group"
+          aria-label="Enviar mensaje simulado como"
+        >
+          <span className="mr-1 text-xs font-medium text-text-3">Enviar como</span>
+          {(
+            [
+              ["lead", "Lead simulado"],
+              ["operator", "Operador"],
+            ] as const
+          ).map(([mode, label]) => (
+            <button
+              key={mode}
+              type="button"
+              aria-pressed={simulationMode === mode}
+              disabled={sending}
+              onClick={() => setSimulationMode(mode)}
+              className={cn(
+                "rounded-full border px-2.5 py-1 text-xs font-semibold transition-colors disabled:opacity-50",
+                simulationMode === mode
+                  ? "border-brand bg-brand-tint text-brand-text"
+                  : "border-border-strong bg-background text-text-2 hover:border-brand"
+              )}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {!conversation.simulated && templates.length > 0 && !file && panel === null && (
         <div className="mb-2.5 flex flex-wrap gap-1.5">
           {templates.slice(0, 4).map((t) => (
             <button
@@ -240,7 +356,7 @@ export function Composer({
         </div>
       )}
 
-      {file && (
+      {!conversation.simulated && file && (
         <div className="mb-2.5 flex items-center gap-2.5 rounded-md border bg-subtle p-2.5">
           {filePreview ? (
             // eslint-disable-next-line @next/next/no-img-element
@@ -268,7 +384,7 @@ export function Composer({
         </div>
       )}
 
-      {panel === "location" && (
+      {!conversation.simulated && panel === "location" && (
         <div className="mb-2.5 flex flex-wrap items-end gap-2 rounded-md border bg-subtle p-2.5">
           <label className="min-w-0 flex-1 text-xs text-text-2">
             Coordenadas o enlace de Google Maps
@@ -305,7 +421,7 @@ export function Composer({
         </div>
       )}
 
-      {panel === "contact" && (
+      {!conversation.simulated && panel === "contact" && (
         <div className="mb-2.5 flex flex-wrap items-end gap-2 rounded-md border bg-subtle p-2.5">
           <label className="min-w-0 flex-1 text-xs text-text-2">
             Nombre
@@ -344,48 +460,57 @@ export function Composer({
 
       {/* La caja de escritura en píldora, como la del mockup de la landing */}
       <div className="flex items-end gap-2 rounded-[23px] border border-border-strong bg-background py-1.5 pl-2 pr-1.5 shadow-sm transition-[border-color,box-shadow] focus-within:border-brand focus-within:ring-[3px] focus-within:ring-brand-soft">
-        <input
-          ref={fileRef}
-          type="file"
-          className="hidden"
-          onChange={(e) => pickFile(e.target.files?.[0] ?? null)}
-        />
-        <div className="flex shrink-0 items-center gap-0.5">
-          <button
-            onClick={() => fileRef.current?.click()}
-            aria-label="Adjuntar archivo"
-            title="Adjuntar imagen, video, audio o documento"
-            className="rounded p-1.5 text-text-3 transition-colors hover:bg-secondary hover:text-foreground"
-          >
-            <Paperclip className="h-[18px] w-[18px]" strokeWidth={1.7} />
-          </button>
-          <button
-            onClick={() => setPanel(panel === "location" ? null : "location")}
-            aria-label="Enviar ubicación"
-            title="Enviar ubicación"
-            className={cn(
-              "rounded p-1.5 text-text-3 transition-colors hover:bg-secondary hover:text-foreground",
-              panel === "location" && "bg-secondary text-brand"
-            )}
-          >
-            <MapPin className="h-[18px] w-[18px]" strokeWidth={1.7} />
-          </button>
-          <button
-            onClick={() => setPanel(panel === "contact" ? null : "contact")}
-            aria-label="Compartir contacto"
-            title="Compartir contacto"
-            className={cn(
-              "rounded p-1.5 text-text-3 transition-colors hover:bg-secondary hover:text-foreground",
-              panel === "contact" && "bg-secondary text-brand"
-            )}
-          >
-            <UserRound className="h-[18px] w-[18px]" strokeWidth={1.7} />
-          </button>
-        </div>
+        {!conversation.simulated && (
+          <>
+            <input
+              ref={fileRef}
+              type="file"
+              className="hidden"
+              onChange={(e) => pickFile(e.target.files?.[0] ?? null)}
+            />
+            <div className="flex shrink-0 items-center gap-0.5">
+              <button
+                onClick={() => fileRef.current?.click()}
+                aria-label="Adjuntar archivo"
+                title="Adjuntar imagen, video, audio o documento"
+                className="rounded p-1.5 text-text-3 transition-colors hover:bg-secondary hover:text-foreground"
+              >
+                <Paperclip className="h-[18px] w-[18px]" strokeWidth={1.7} />
+              </button>
+              <button
+                onClick={() => setPanel(panel === "location" ? null : "location")}
+                aria-label="Enviar ubicación"
+                title="Enviar ubicación"
+                className={cn(
+                  "rounded p-1.5 text-text-3 transition-colors hover:bg-secondary hover:text-foreground",
+                  panel === "location" && "bg-secondary text-brand"
+                )}
+              >
+                <MapPin className="h-[18px] w-[18px]" strokeWidth={1.7} />
+              </button>
+              <button
+                onClick={() => setPanel(panel === "contact" ? null : "contact")}
+                aria-label="Compartir contacto"
+                title="Compartir contacto"
+                className={cn(
+                  "rounded p-1.5 text-text-3 transition-colors hover:bg-secondary hover:text-foreground",
+                  panel === "contact" && "bg-secondary text-brand"
+                )}
+              >
+                <UserRound className="h-[18px] w-[18px]" strokeWidth={1.7} />
+              </button>
+            </div>
+          </>
+        )}
         <textarea
           ref={taRef}
-          placeholder={file ? "Pie del adjunto (opcional)…" : "Escribe una respuesta…"}
+          placeholder={
+            !conversation.simulated && file
+              ? "Pie del adjunto (opcional)…"
+              : "Escribe una respuesta…"
+          }
           value={text}
+          disabled={conversation.simulated && sending}
           rows={1}
           onChange={(e) => {
             setText(e.target.value);
@@ -414,7 +539,9 @@ export function Composer({
       <div className="mt-1.5 flex items-center justify-between">
         {error ? <p className="text-xs text-destructive">{error}</p> : <span />}
         <p className="font-mono text-[10.5px] tracking-[0.04em] text-text-3">
-          Ventana abierta · quedan {formatRemaining(conversation.windowRemainingMs)}
+          {conversation.simulated
+            ? "Simulación local"
+            : `Ventana abierta · quedan ${formatRemaining(conversation.windowRemainingMs)}`}
         </p>
       </div>
     </div>
