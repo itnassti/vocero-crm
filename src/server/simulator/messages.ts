@@ -5,6 +5,7 @@ import { scoped } from "@/lib/db/tenant";
 import { maybeRunAgentTurn } from "@/server/ai/trigger";
 import { publish } from "@/server/events/bus";
 import { onLeadActivity } from "@/server/inbox/lead-activity";
+import { serializeSimulatedMessage } from "@/server/simulator/message-contract";
 
 export class SimulatedInboundMessageError extends Error {
   constructor(
@@ -107,22 +108,4 @@ export async function insertSimulatedInboundMessage(
   }
 
   return message;
-}
-
-function serializeSimulatedMessage(
-  message: typeof schema.message.$inferSelect
-) {
-  return {
-    id: message.id,
-    conversationId: message.conversationId,
-    direction: message.direction,
-    type: message.type,
-    text: message.text,
-    status: message.status,
-    error: message.error,
-    aiGenerated: message.aiGenerated,
-    origin: message.origin,
-    media: null,
-    createdAt: (message.waTimestamp ?? message.createdAt).toISOString(),
-  };
 }

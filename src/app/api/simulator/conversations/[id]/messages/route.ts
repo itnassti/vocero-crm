@@ -1,5 +1,5 @@
-import { z } from "zod";
 import { apiError, parseBody, withAuth } from "@/lib/api";
+import { simulatedMessageBodySchema } from "@/server/simulator/message-contract";
 import {
   insertSimulatedInboundMessage,
   SimulatedInboundMessageError,
@@ -9,15 +9,9 @@ export const dynamic = "force-dynamic";
 
 type Params = { params: Promise<{ id: string }> };
 
-const messageSchema = z
-  .object({
-    text: z.string().trim().min(1).max(4096),
-  })
-  .strict();
-
 export const POST = withAuth(async (session, req: Request, ctx: Params) => {
   const { id } = await ctx.params;
-  const body = await parseBody(req, messageSchema);
+  const body = await parseBody(req, simulatedMessageBodySchema);
   if (!body.ok) {
     return apiError(400, "invalid_body", "El mensaje simulado no es válido");
   }
