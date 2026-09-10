@@ -1,26 +1,40 @@
 import { eq } from "drizzle-orm";
+import { z } from "zod";
 import { getDb, schema } from "@/lib/db";
 import { newId } from "@/lib/db/ids";
 import { scoped } from "@/lib/db/tenant";
 import { normalizeFicha } from "@/server/bot/ficha";
 import { createLeadForContact } from "@/server/inbox/lead-activity";
 
-export type SimulatedLeadInput = {
-  name: string;
-  phone?: string | null;
-  email?: string | null;
-  ageRange: string;
-  country: string;
-  goal: string;
-  obstacles: string;
-  willingToInvest: boolean;
-  source: "anuncio" | "organico" | "referido" | "conocido" | "otro";
-  platform: string;
-  campaignId?: string | null;
-  adsetId?: string | null;
-  adId?: string | null;
-  placement?: string | null;
-};
+const optionalText = z.string().trim().min(1).max(500).nullable().optional();
+
+export const simulatedLeadInputSchema = z
+  .object({
+    name: z.string().trim().min(1).max(120),
+    phone: z.string().trim().min(1).max(30).nullable().optional(),
+    email: z.string().trim().email().max(254).nullable().optional(),
+    ageRange: z.string().trim().min(1).max(500),
+    country: z.string().trim().min(1).max(500),
+    goal: z.string().trim().min(1).max(500),
+    obstacles: z.string().trim().min(1).max(500),
+    willingToInvest: z.boolean(),
+    source: z.enum(["anuncio", "organico", "referido", "conocido", "otro"]),
+    platform: z.string().trim().min(1).max(500),
+    campaignId: optionalText,
+    adsetId: optionalText,
+    adId: optionalText,
+    placement: optionalText,
+  })
+  .strict();
+
+export type SimulatedLeadInput = z.infer<typeof simulatedLeadInputSchema>;
+
+export class SimulatedLeadCreationError extends Error {
+  constructor(public readonly code: "no_open_stage") {
+    super("No hay una etapa abierta para el lead simulado");
+    this.name = "SimulatedLeadCreationError";
+  }
+}
 
 export type SimulatedLeadResult = {
   contact: typeof schema.contact.$inferSelect;
@@ -103,7 +117,7 @@ export async function createSimulatedLead(
       source: "sistema",
     });
     if (!lead) {
-      throw new Error("No hay una etapa abierta para el lead simulado");
+      throw new SimulatedLeadCreationError("no_open_stage");
     }
 
     const insertedConversations = await db
