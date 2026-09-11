@@ -8,6 +8,7 @@ import { chatJson, type ChatMessage } from "@/lib/ai";
 import { publish } from "@/server/events/bus";
 import { isWindowOpen } from "@/server/inbox/window";
 import { SendError, sendText } from "@/server/inbox/send";
+import { getContactById, getContactStage } from "@/server/contacts";
 import {
   agentActionSchema,
   degradeAction,
@@ -142,6 +143,15 @@ export async function runAgentTurn(conversationId: string): Promise<void> {
     return;
   }
 
+  const contact = await getContactById(
+    organizationId,
+    conversation.contactId
+  );
+  const currentLead = await getContactStage(
+    organizationId,
+    conversation.contactId
+  );
+
   const kb = await db
     .select()
     .from(schema.kbEntry)
@@ -181,7 +191,18 @@ export async function runAgentTurn(conversationId: string): Promise<void> {
   const messages: ChatMessage[] = [
     {
       role: "system",
-      content: buildAgentSystemPrompt({ profile, kb, stages, agenda }),
+      content: buildAgentSystemPrompt({
+        profile,
+        kb,
+        stages,
+        agenda,
+        leadContext: {
+          name: contact?.name,
+          source: contact?.source,
+          ficha: contact?.ficha,
+          stageName: currentLead?.stage.name,
+        },
+      }),
     },
     ...history
       .filter((m) => m.text)

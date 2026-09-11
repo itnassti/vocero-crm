@@ -8,6 +8,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const graphRequest = vi.fn();
 const publish = vi.fn();
 const sendText = vi.fn();
+const chatJson = vi.fn().mockResolvedValue({
+  ok: true,
+  data: { action: "reply", text: "respuesta simulada" },
+  raw: "{}",
+});
 
 class SendError extends Error {
   constructor(readonly code: string) {
@@ -24,13 +29,13 @@ vi.mock("@/server/events/bus", () => ({ publish }));
 
 vi.mock("@/server/inbox/send", () => ({ SendError, sendText }));
 
-vi.mock("@/lib/ai", () => ({
-  chatJson: vi.fn().mockResolvedValue({
-    ok: true,
-    data: { action: "reply", text: "respuesta simulada" },
-    raw: "{}",
-  }),
-}));
+vi.mock("@/lib/ai", () => ({ chatJson }));
+
+const successfulReply = {
+  ok: true,
+  data: { action: "reply", text: "respuesta simulada" },
+  raw: "{}",
+};
 
 // BD simulada: cola de resultados de select + capturas de insert/update.
 const selectQueue: unknown[][] = [];
@@ -99,6 +104,7 @@ describe("sandbox del Laboratorio en el pipeline del agente", () => {
     graphRequest.mockReset();
     publish.mockReset();
     sendText.mockReset();
+    chatJson.mockReset().mockResolvedValue(successfulReply);
     selectQueue.length = 0;
     inserts.length = 0;
     vi.stubEnv("OPENROUTER_API_TOKEN", "token-test");
@@ -117,7 +123,18 @@ describe("sandbox del Laboratorio en el pipeline del agente", () => {
     };
     selectQueue.push(
       [testConversation], // conversación
-      [{ id: "agp_1", organizationId: "org_1", enabled: false, name: "Asistente", tone: null, instructions: null, escalationRules: null, greeting: null }], // perfil (apagado: el Lab evalúa igual)
+      [
+        {
+          id: "agp_1",
+          organizationId: "org_1",
+          enabled: false,
+          name: "Asistente",
+          tone: "cercano",
+          instructions: "Haz discovery",
+          escalationRules: null,
+          greeting: "Hola",
+        },
+      ], // perfil (apagado: el Lab evalúa igual)
       [
         {
           id: "msg_1",
@@ -126,8 +143,45 @@ describe("sandbox del Laboratorio en el pipeline del agente", () => {
           createdAt: new Date(),
         },
       ], // historial
-      [], // kb
-      [] // etapas
+      [
+        {
+          id: "ct_lab",
+          organizationId: "org_1",
+          name: "Laura Test",
+          phone: "+34000000000",
+          waIdentity: "sim:ct_lab",
+          source: "anuncio",
+          ficha: {
+            ageRange: "35-44",
+            country: "España",
+            goal: "Perder grasa",
+            obstacles: "Constancia",
+            willingToInvest: true,
+            platform: "Instagram",
+            email: "email-no-enviar@example.com",
+            campaignId: "campaign-interna",
+            adsetId: "adset-interno",
+            adId: "ad-interno",
+          },
+        },
+      ], // contacto scoped
+      [
+        {
+          stage: { id: "stage_interna", name: "Interesado" },
+          lead: { id: "lead_interno" },
+        },
+      ], // stage actual scoped
+      [
+        {
+          kind: "qa",
+          question: "¿Qué ofrecemos?",
+          answer: "Acompañamiento",
+        },
+      ], // kb
+      [
+        { id: "stage_nuevo", name: "Nuevo" },
+        { id: "stage_interesado", name: "Interesado" },
+      ] // etapas
     );
 
     const { runAgentTurn } = await import("@/server/ai/pipeline");
@@ -135,6 +189,45 @@ describe("sandbox del Laboratorio en el pipeline del agente", () => {
 
     expect(sendText).not.toHaveBeenCalled();
     expect(graphRequest).not.toHaveBeenCalled();
+
+    const llmMessages = chatJson.mock.calls[0]?.[1] as
+      | { role: string; content: string }[]
+      | undefined;
+    expect(llmMessages).toBeDefined();
+    const systemPrompt = llmMessages?.[0]?.content ?? "";
+    expect(systemPrompt).toContain("Tono: cercano");
+    expect(systemPrompt).toContain("Instrucciones del negocio:\nHaz discovery");
+    expect(systemPrompt).toContain("P: ¿Qué ofrecemos?\nR: Acompañamiento");
+    expect(systemPrompt).toContain(
+      "Etapas del pipeline disponibles: Nuevo | Interesado"
+    );
+    expect(systemPrompt).toContain("- Nombre: Laura Test");
+    expect(systemPrompt).toContain("- País: España");
+    expect(systemPrompt).toContain("- Objetivo: Perder grasa");
+    expect(systemPrompt).toContain("- Obstáculos: Constancia");
+    expect(systemPrompt).toContain("- Disposición a invertir: Sí");
+    expect(systemPrompt).toContain("- Origen: anuncio");
+    expect(systemPrompt).toContain("- Plataforma: Instagram");
+    expect(systemPrompt).toContain("- Etapa actual: Interesado");
+    expect(llmMessages).toContainEqual({
+      role: "user",
+      content: "¿tienen taladros?",
+    });
+
+    const llmPayload = JSON.stringify(llmMessages);
+    for (const excluded of [
+      "email-no-enviar@example.com",
+      "+34000000000",
+      "sim:ct_lab",
+      "campaign-interna",
+      "adset-interno",
+      "ad-interno",
+      "ct_lab",
+      "lead_interno",
+      "stage_interna",
+    ]) {
+      expect(llmPayload).not.toContain(excluded);
+    }
     // la respuesta quedó persistida como mensaje saliente ai_generated
     const messageInsert = inserts.find(
       (i) =>
@@ -214,6 +307,16 @@ describe("sandbox del Laboratorio en el pipeline del agente", () => {
           createdAt: new Date(),
         },
       ],
+      [
+        {
+          id: "ct_real",
+          organizationId: "org_1",
+          name: "Contacto real",
+          source: null,
+          ficha: {},
+        },
+      ],
+      [],
       [],
       []
     );

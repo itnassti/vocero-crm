@@ -3,6 +3,13 @@ import type { schema } from "@/lib/db";
 type AgentProfile = typeof schema.agentProfile.$inferSelect;
 type KbEntry = typeof schema.kbEntry.$inferSelect;
 
+export type KnownLeadContext = {
+  name?: string | null;
+  source?: string | null;
+  stageName?: string | null;
+  ficha?: Record<string, unknown> | null;
+};
+
 /** Marcador del prompt del juez: el ai-mock lo usa para despachar veredictos. */
 export const JUDGE_MARKER = "[JUEZ]";
 
@@ -18,6 +25,47 @@ export function renderKb(entries: KbEntry[]): string {
     .join("\n\n");
 }
 
+function knownText(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().replace(/\s+/g, " ");
+  return normalized || null;
+}
+
+/** Solo datos comerciales ya conocidos; excluye PII e identificadores técnicos. */
+export function renderKnownLeadContext(
+  context: KnownLeadContext | null | undefined
+): string | null {
+  if (!context) return null;
+  const ficha = context.ficha ?? {};
+  const lines: string[] = [];
+  const add = (label: string, value: unknown) => {
+    const text = knownText(value);
+    if (text) lines.push(`- ${label}: ${text}`);
+  };
+
+  add("Nombre", context.name);
+  add("Rango de edad", ficha.ageRange);
+  add("País", ficha.country);
+  add("Objetivo", ficha.goal);
+  add("Obstáculos", ficha.obstacles);
+  if (typeof ficha.willingToInvest === "boolean") {
+    lines.push(
+      `- Disposición a invertir: ${ficha.willingToInvest ? "Sí" : "No"}`
+    );
+  }
+  add("Origen", context.source);
+  add("Plataforma", ficha.platform);
+  add("Etapa actual", context.stageName);
+
+  if (lines.length === 0) return null;
+  return [
+    "CONTEXTO CONOCIDO DEL LEAD",
+    ...lines,
+    "",
+    "Estos datos ya son conocidos. No vuelvas a preguntarlos salvo que exista una contradicción o sea necesario aclararlos.",
+  ].join("\n");
+}
+
 /**
  * System prompt del agente (v1: inyecta el KB completo — el límite se
  * documenta con el contador de tamaño en la UI).
@@ -26,6 +74,7 @@ export function buildAgentSystemPrompt(input: {
   profile: AgentProfile;
   kb: KbEntry[];
   stages: { name: string }[];
+  leadContext?: KnownLeadContext | null;
   /**
    * 015 — ¿esta instancia tiene agenda? Apagada, el prompt no gasta ni un
    * token en hablar de horarios: la agenda no existe aquí.
@@ -34,6 +83,7 @@ export function buildAgentSystemPrompt(input: {
 }): string {
   const { profile } = input;
   const stageNames = input.stages.map((s) => s.name).join(" | ");
+  const leadContext = renderKnownLeadContext(input.leadContext);
   const agendaLines = input.agenda
     ? [
         '- {"action":"offer_slots","reply":"..."} — ofrecer horarios para agendar (reply es solo la frase de entrada; los horarios los pone el sistema).',
@@ -55,6 +105,7 @@ export function buildAgentSystemPrompt(input: {
       ? `Reglas de escalado a humano:\n${profile.escalationRules}`
       : null,
     profile.greeting ? `Saludo sugerido para conversaciones nuevas: ${profile.greeting}` : null,
+    leadContext,
     `CONOCIMIENTO DEL NEGOCIO (tu única fuente de verdad; si algo no está aquí, NO lo inventes — di que lo confirmarás con el equipo o escala):\n${renderKb(input.kb)}`,
     `Etapas del pipeline disponibles: ${stageNames}`,
     [
