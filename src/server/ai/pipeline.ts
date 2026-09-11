@@ -19,6 +19,7 @@ import { buildAgentSystemPrompt } from "@/server/ai/prompts";
 import { agendaEnabled } from "@/server/agenda/flag";
 import { bookSlot, offerSlots } from "@/server/agenda/agent";
 import { getOffers, mapaDeHuecosParaModelo } from "@/server/agenda/offers";
+import { serializeSimulatedMessage } from "@/server/simulator/message-contract";
 
 /**
  * Turno del agente (FR-021..FR-025).
@@ -314,21 +315,35 @@ async function persistTestOutbound(
   text: string
 ): Promise<void> {
   const db = getDb();
-  await db.insert(schema.message).values({
-    id: newId("message"),
-    organizationId: conversation.organizationId,
-    conversationId: conversation.id,
-    direction: "out",
-    type: "text",
-    text,
-    status: "sent",
-    aiGenerated: true,
-    origin: "ai",
-  });
+  const inserted = await db
+    .insert(schema.message)
+    .values({
+      id: newId("message"),
+      organizationId: conversation.organizationId,
+      conversationId: conversation.id,
+      direction: "out",
+      type: "text",
+      text,
+      status: "sent",
+      aiGenerated: true,
+      origin: "ai",
+    })
+    .returning();
+  const message = inserted[0];
+  if (!message) throw new Error("No se pudo persistir la respuesta simulada");
+
   await db
     .update(schema.conversation)
     .set({ lastMessageAt: new Date(), updatedAt: new Date() })
     .where(eq(schema.conversation.id, conversation.id));
+
+  publish(conversation.organizationId, {
+    type: "message.new",
+    data: {
+      conversationId: conversation.id,
+      message: serializeSimulatedMessage(message),
+    },
+  });
 }
 
 export async function applyHandoff(
