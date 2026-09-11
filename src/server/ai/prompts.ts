@@ -10,6 +10,23 @@ export type KnownLeadContext = {
   ficha?: Record<string, unknown> | null;
 };
 
+export type AgentTurnMode = "normal" | "first_outreach";
+
+export const FIRST_OUTREACH_PROMPT = [
+  "MODO DEL TURNO: PRIMER OUTREACH",
+  "",
+  "La persona ha rellenado previamente un formulario mostrando interés en Jynfits y todavía no ha escrito en esta conversación.",
+  "",
+  "Redacta el primer mensaje outbound usando el CONTEXTO CONOCIDO DEL LEAD.",
+  "",
+  "No respondas como si la persona hubiera enviado un mensaje previamente.",
+  "No empieces una cualificación desde cero.",
+  "Aprovecha los datos conocidos del formulario.",
+  "El objetivo es abrir una conversación natural y facilitar que la persona responda.",
+  "",
+  "Este turno solo puede producir una respuesta conversacional.",
+].join("\n");
+
 /** Marcador del prompt del juez: el ai-mock lo usa para despachar veredictos. */
 export const JUDGE_MARKER = "[JUEZ]";
 
@@ -80,17 +97,19 @@ export function buildAgentSystemPrompt(input: {
    * token en hablar de horarios: la agenda no existe aquí.
    */
   agenda?: boolean;
+  turnMode?: AgentTurnMode;
 }): string {
   const { profile } = input;
+  const turnMode = input.turnMode ?? "normal";
   const stageNames = input.stages.map((s) => s.name).join(" | ");
   const leadContext = renderKnownLeadContext(input.leadContext);
-  const agendaLines = input.agenda
+  const agendaLines = input.agenda && turnMode === "normal"
     ? [
         '- {"action":"offer_slots","reply":"..."} — ofrecer horarios para agendar (reply es solo la frase de entrada; los horarios los pone el sistema).',
         '- {"action":"book_slot","startUtc":"<uno de los horarios que el sistema ofreció, en ISO UTC>","reply":"..."} — agendar el horario que el cliente eligió.',
       ]
     : [];
-  const agendaRules = input.agenda
+  const agendaRules = input.agenda && turnMode === "normal"
     ? [
         "- NUNCA escribas tú los horarios ni los inventes: usa offer_slots y el sistema pega los reales.",
         "- book_slot solo acepta un horario que el sistema ofreció antes en ESTA conversación. Si el cliente pide otro, vuelve a ofrecer con offer_slots.",
@@ -108,21 +127,28 @@ export function buildAgentSystemPrompt(input: {
     leadContext,
     `CONOCIMIENTO DEL NEGOCIO (tu única fuente de verdad; si algo no está aquí, NO lo inventes — di que lo confirmarás con el equipo o escala):\n${renderKb(input.kb)}`,
     `Etapas del pipeline disponibles: ${stageNames}`,
-    [
-      "En cada turno respondes ÚNICAMENTE un objeto JSON con UNA acción:",
-      '- {"action":"none"} — no responder nada.',
-      '- {"action":"reply","text":"..."} — responder al cliente.',
-      '- {"action":"update_lead","note":"...","reply":"..."} — guardar una nota del lead (reply opcional).',
-      '- {"action":"move_stage","stage":"<nombre exacto de etapa>","reply":"..."} — mover el lead (reply opcional).',
-      '- {"action":"handoff","reason":"...","farewell":"..."} — escalar a un humano (farewell opcional para despedirte).',
-      ...agendaLines,
-      "Reglas duras:",
-      "- Si el cliente pide hablar con una persona/humano/asesor → handoff.",
-      "- Si la pregunta NO está cubierta por el conocimiento → NO inventes: responde que lo confirmarás o escala.",
-      "- Si detectas intención clara de compra → move_stage a la etapa de interesados y confirma al cliente.",
-      ...agendaRules,
-      "- JSON puro, sin markdown ni texto adicional.",
-    ].join("\n"),
+    turnMode === "first_outreach"
+      ? [
+          FIRST_OUTREACH_PROMPT,
+          "Responde ÚNICAMENTE un objeto JSON con esta forma:",
+          '- {"action":"reply","text":"..."}',
+          "- JSON puro, sin markdown ni texto adicional.",
+        ].join("\n")
+      : [
+          "En cada turno respondes ÚNICAMENTE un objeto JSON con UNA acción:",
+          '- {"action":"none"} — no responder nada.',
+          '- {"action":"reply","text":"..."} — responder al cliente.',
+          '- {"action":"update_lead","note":"...","reply":"..."} — guardar una nota del lead (reply opcional).',
+          '- {"action":"move_stage","stage":"<nombre exacto de etapa>","reply":"..."} — mover el lead (reply opcional).',
+          '- {"action":"handoff","reason":"...","farewell":"..."} — escalar a un humano (farewell opcional para despedirte).',
+          ...agendaLines,
+          "Reglas duras:",
+          "- Si el cliente pide hablar con una persona/humano/asesor → handoff.",
+          "- Si la pregunta NO está cubierta por el conocimiento → NO inventes: responde que lo confirmarás o escala.",
+          "- Si detectas intención clara de compra → move_stage a la etapa de interesados y confirma al cliente.",
+          ...agendaRules,
+          "- JSON puro, sin markdown ni texto adicional.",
+        ].join("\n"),
   ]
     .filter(Boolean)
     .join("\n\n");

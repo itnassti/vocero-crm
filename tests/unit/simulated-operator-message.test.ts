@@ -86,7 +86,9 @@ vi.mock("@/lib/db/ids", () => ({ newId: () => "msg_operator" }));
 
 vi.mock("@/lib/db", () => ({
   schema: mocks.schema,
-  getDb: () => ({
+  getDb: () => {
+    const db = {
+    transaction: (work: (tx: unknown) => unknown) => work(db),
     select: () => {
       const call: { where?: QueryExpr } = {};
       mocks.selects.push(call);
@@ -96,6 +98,7 @@ vi.mock("@/lib/db", () => ({
           call.where = where;
           return chain;
         },
+        for: () => chain,
         limit: () =>
           Promise.resolve(
             mocks.conversations.filter((row) =>
@@ -129,7 +132,9 @@ vi.mock("@/lib/db", () => ({
         },
       }),
     }),
-  }),
+    };
+    return db;
+  },
 }));
 
 vi.mock("@/server/events/bus", () => ({ publish: mocks.publish }));

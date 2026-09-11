@@ -44,7 +44,7 @@ const persistedAt = new Date("2026-09-11T12:00:00.000Z");
 
 function thenableChain(rows: unknown[]) {
   const chain: Record<string, unknown> = {};
-  for (const m of ["from", "innerJoin", "where", "orderBy", "limit"]) {
+  for (const m of ["from", "innerJoin", "where", "orderBy", "for", "limit"]) {
     chain[m] = () => chain;
   }
   (chain as { then: unknown }).then = (
@@ -54,9 +54,11 @@ function thenableChain(rows: unknown[]) {
 }
 
 vi.mock("@/lib/db", () => ({
-  getDb: () => ({
-    select: () => thenableChain(selectQueue.shift() ?? []),
-    insert: (table: unknown) => ({
+  getDb: () => {
+    const db = {
+      transaction: (work: (tx: unknown) => unknown) => work(db),
+      select: () => thenableChain(selectQueue.shift() ?? []),
+      insert: (table: unknown) => ({
       values: (values: unknown) => {
         inserts.push({ table, values });
         const returned = {
@@ -73,8 +75,8 @@ vi.mock("@/lib/db", () => ({
         };
         return chain;
       },
-    }),
-    update: () => ({
+      }),
+      update: () => ({
       set: () => ({
         where: () => {
           const chain = {
@@ -85,8 +87,10 @@ vi.mock("@/lib/db", () => ({
           return chain;
         },
       }),
-    }),
-  }),
+      }),
+    };
+    return db;
+  },
   schema: new Proxy(
     {},
     {
@@ -137,12 +141,18 @@ describe("sandbox del Laboratorio en el pipeline del agente", () => {
       ], // perfil (apagado: el Lab evalúa igual)
       [
         {
-          id: "msg_1",
+          id: "msg_inbound",
           direction: "in",
           text: "¿tienen taladros?",
-          createdAt: new Date(),
+          createdAt: new Date("2026-09-11T10:01:00.000Z"),
         },
-      ], // historial
+        {
+          id: "msg_outreach",
+          direction: "out",
+          text: "Hola Laura, vi que quieres perder grasa.",
+          createdAt: new Date("2026-09-11T10:00:00.000Z"),
+        },
+      ], // historial DESC: outreach previo + respuesta inbound
       [
         {
           id: "ct_lab",
@@ -181,7 +191,8 @@ describe("sandbox del Laboratorio en el pipeline del agente", () => {
       [
         { id: "stage_nuevo", name: "Nuevo" },
         { id: "stage_interesado", name: "Interesado" },
-      ] // etapas
+      ], // etapas
+      [testConversation] // revalidación isTest bajo lock antes de persistir
     );
 
     const { runAgentTurn } = await import("@/server/ai/pipeline");
@@ -209,10 +220,13 @@ describe("sandbox del Laboratorio en el pipeline del agente", () => {
     expect(systemPrompt).toContain("- Origen: anuncio");
     expect(systemPrompt).toContain("- Plataforma: Instagram");
     expect(systemPrompt).toContain("- Etapa actual: Interesado");
-    expect(llmMessages).toContainEqual({
-      role: "user",
-      content: "¿tienen taladros?",
-    });
+    expect(llmMessages?.slice(1)).toEqual([
+      {
+        role: "assistant",
+        content: "Hola Laura, vi que quieres perder grasa.",
+      },
+      { role: "user", content: "¿tienen taladros?" },
+    ]);
 
     const llmPayload = JSON.stringify(llmMessages);
     for (const excluded of [
@@ -244,6 +258,7 @@ describe("sandbox del Laboratorio en el pipeline del agente", () => {
     );
     expect(messageInsert!.values).toMatchObject({
       conversationId: "cv_lab",
+      waMessageId: null,
       direction: "out",
       type: "text",
       text: "respuesta simulada",
@@ -272,6 +287,50 @@ describe("sandbox del Laboratorio en el pipeline del agente", () => {
         },
       },
     });
+  });
+
+  it("el turno normal sigue sin llamar al LLM cuando no existe inbound", async () => {
+    selectQueue.push(
+      [
+        {
+          id: "cv_only_outreach",
+          organizationId: "org_1",
+          contactId: "ct_lab",
+          isTest: true,
+          aiEnabled: true,
+          handoffAt: null,
+          lastInboundAt: null,
+        },
+      ],
+      [
+        {
+          id: "agp_1",
+          organizationId: "org_1",
+          enabled: false,
+          name: "Asistente",
+          tone: null,
+          instructions: null,
+          escalationRules: null,
+          greeting: null,
+        },
+      ],
+      [
+        {
+          id: "msg_outreach",
+          direction: "out",
+          text: "Hola, vi tu formulario.",
+          createdAt: new Date(),
+        },
+      ]
+    );
+
+    const { runAgentTurn } = await import("@/server/ai/pipeline");
+    await runAgentTurn("cv_only_outreach");
+
+    expect(chatJson).not.toHaveBeenCalled();
+    expect(sendText).not.toHaveBeenCalled();
+    expect(inserts).toHaveLength(0);
+    expect(publish).not.toHaveBeenCalled();
   });
 
   it("mantiene el flujo real en sendText sin persistencia SSE del sandbox", async () => {

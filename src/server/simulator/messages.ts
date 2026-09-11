@@ -34,60 +34,66 @@ export async function insertSimulatedInboundMessage(
   text: string
 ): Promise<SimulatedInboundMessageResult> {
   const db = getDb();
-  const conversations = await db
-    .select()
-    .from(schema.conversation)
-    .where(
-      scoped(
-        schema.conversation.organizationId,
-        organizationId,
-        eq(schema.conversation.id, conversationId)
+  const { conversation, message, now } = await db.transaction(async (tx) => {
+    // Comparte el row lock con el primer outreach para definir qué mensaje gana.
+    const conversations = await tx
+      .select()
+      .from(schema.conversation)
+      .where(
+        scoped(
+          schema.conversation.organizationId,
+          organizationId,
+          eq(schema.conversation.id, conversationId)
+        )
       )
-    )
-    .limit(1);
-  const conversation = conversations[0];
+      .for("update")
+      .limit(1);
+    const conversation = conversations[0];
 
-  if (!conversation) {
-    throw new SimulatedInboundMessageError("conversation_not_found");
-  }
-  if (!conversation.isTest) {
-    throw new SimulatedInboundMessageError("conversation_not_test");
-  }
+    if (!conversation) {
+      throw new SimulatedInboundMessageError("conversation_not_found");
+    }
+    if (!conversation.isTest) {
+      throw new SimulatedInboundMessageError("conversation_not_test");
+    }
 
-  const now = new Date();
-  const inserted = await db
-    .insert(schema.message)
-    .values({
-      id: newId("message"),
-      organizationId,
-      conversationId: conversation.id,
-      waMessageId: null,
-      direction: "in",
-      type: "text",
-      text,
-      status: "delivered",
-      waTimestamp: now,
-    })
-    .returning();
-  const message = inserted[0];
-  if (!message) throw new Error("No se pudo insertar el mensaje simulado");
-
-  await db
-    .update(schema.conversation)
-    .set({
-      lastInboundAt: now,
-      lastMessageAt: now,
-      unreadCount: sql`${schema.conversation.unreadCount} + 1`,
-      updatedAt: now,
-    })
-    .where(
-      scoped(
-        schema.conversation.organizationId,
+    const now = new Date();
+    const inserted = await tx
+      .insert(schema.message)
+      .values({
+        id: newId("message"),
         organizationId,
-        eq(schema.conversation.id, conversation.id),
-        eq(schema.conversation.isTest, true)
-      )
-    );
+        conversationId: conversation.id,
+        waMessageId: null,
+        direction: "in",
+        type: "text",
+        text,
+        status: "delivered",
+        waTimestamp: now,
+      })
+      .returning();
+    const message = inserted[0];
+    if (!message) throw new Error("No se pudo insertar el mensaje simulado");
+
+    await tx
+      .update(schema.conversation)
+      .set({
+        lastInboundAt: now,
+        lastMessageAt: now,
+        unreadCount: sql`${schema.conversation.unreadCount} + 1`,
+        updatedAt: now,
+      })
+      .where(
+        scoped(
+          schema.conversation.organizationId,
+          organizationId,
+          eq(schema.conversation.id, conversation.id),
+          eq(schema.conversation.isTest, true)
+        )
+      );
+
+    return { conversation, message, now };
+  });
 
   await onLeadActivity(organizationId, conversation.contactId, now);
 

@@ -1,6 +1,5 @@
-import { asc, desc, eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { getDb, schema } from "@/lib/db";
-import { newId } from "@/lib/db/ids";
 import { scoped } from "@/lib/db/tenant";
 import { moveLeadToStage as moveLeadThroughHistory } from "@/server/leads/stage-history";
 import { getEnv, isAiConfigured } from "@/lib/env";
@@ -8,7 +7,6 @@ import { chatJson, type ChatMessage } from "@/lib/ai";
 import { publish } from "@/server/events/bus";
 import { isWindowOpen } from "@/server/inbox/window";
 import { SendError, sendText } from "@/server/inbox/send";
-import { getContactById, getContactStage } from "@/server/contacts";
 import {
   agentActionSchema,
   degradeAction,
@@ -17,10 +15,11 @@ import {
 } from "@/server/ai/actions";
 import { matchesHandoffIntent } from "@/server/ai/handoff";
 import { buildAgentSystemPrompt } from "@/server/ai/prompts";
+import { loadAgentPromptContext } from "@/server/ai/context";
 import { agendaEnabled } from "@/server/agenda/flag";
 import { bookSlot, offerSlots } from "@/server/agenda/agent";
 import { getOffers, mapaDeHuecosParaModelo } from "@/server/agenda/offers";
-import { serializeSimulatedMessage } from "@/server/simulator/message-contract";
+import { persistSimulatedAiOutbound } from "@/server/simulator/ai-outbound";
 
 /**
  * Turno del agente (FR-021..FR-025).
@@ -143,25 +142,11 @@ export async function runAgentTurn(conversationId: string): Promise<void> {
     return;
   }
 
-  const contact = await getContactById(
+  const promptContext = await loadAgentPromptContext(
     organizationId,
     conversation.contactId
   );
-  const currentLead = await getContactStage(
-    organizationId,
-    conversation.contactId
-  );
-
-  const kb = await db
-    .select()
-    .from(schema.kbEntry)
-    .where(eq(schema.kbEntry.organizationId, organizationId))
-    .orderBy(asc(schema.kbEntry.createdAt));
-  const stages = await db
-    .select({ id: schema.pipelineStage.id, name: schema.pipelineStage.name })
-    .from(schema.pipelineStage)
-    .where(eq(schema.pipelineStage.organizationId, organizationId))
-    .orderBy(asc(schema.pipelineStage.position));
+  const { stages } = promptContext;
 
   const agenda = agendaEnabled();
 
@@ -193,15 +178,8 @@ export async function runAgentTurn(conversationId: string): Promise<void> {
       role: "system",
       content: buildAgentSystemPrompt({
         profile,
-        kb,
-        stages,
+        ...promptContext,
         agenda,
-        leadContext: {
-          name: contact?.name,
-          source: contact?.source,
-          ficha: contact?.ficha,
-          stageName: currentLead?.stage.name,
-        },
       }),
     },
     ...history
@@ -311,7 +289,11 @@ async function deliverReply(
   text: string
 ): Promise<void> {
   if (conversation.isTest) {
-    await persistTestOutbound(conversation, text);
+    await persistSimulatedAiOutbound(
+      conversation.organizationId,
+      conversation.id,
+      text
+    );
     return;
   }
   try {
@@ -328,43 +310,6 @@ async function deliverReply(
     }
     throw err;
   }
-}
-
-/** Mensaje saliente del sandbox: se persiste, JAMÁS toca la API (FR-031). */
-async function persistTestOutbound(
-  conversation: Conversation,
-  text: string
-): Promise<void> {
-  const db = getDb();
-  const inserted = await db
-    .insert(schema.message)
-    .values({
-      id: newId("message"),
-      organizationId: conversation.organizationId,
-      conversationId: conversation.id,
-      direction: "out",
-      type: "text",
-      text,
-      status: "sent",
-      aiGenerated: true,
-      origin: "ai",
-    })
-    .returning();
-  const message = inserted[0];
-  if (!message) throw new Error("No se pudo persistir la respuesta simulada");
-
-  await db
-    .update(schema.conversation)
-    .set({ lastMessageAt: new Date(), updatedAt: new Date() })
-    .where(eq(schema.conversation.id, conversation.id));
-
-  publish(conversation.organizationId, {
-    type: "message.new",
-    data: {
-      conversationId: conversation.id,
-      message: serializeSimulatedMessage(message),
-    },
-  });
 }
 
 export async function applyHandoff(
