@@ -1,0 +1,9 @@
+{
+  "name": "whoop-snapshot",
+  "version": "1.0.0",
+  "private": true,
+  "type": "commonjs",
+  "engines": {"node": ">=22"},
+  "scripts": {"start": "node server.cjs"},
+  "dependencies": {"pg": "^8.13.0"}
+}
