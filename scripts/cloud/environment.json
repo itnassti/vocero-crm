@@ -1,0 +1,25 @@
+{
+  "purpose": "AI Setter sandbox only; configuration proposal, not a published Codex environment",
+  "repository": "itnassti/vocero-crm",
+  "baseBranch": "feat/ai-setter-beta",
+  "platform": "linux",
+  "nodeMajor": 22,
+  "postgresMajor": 16,
+  "packageManagerSource": "package.json#packageManager",
+  "installScript": "bash scripts/cloud/install.sh",
+  "startInstructions": "Run bash scripts/cloud/run.sh to create an isolated PostgreSQL cluster, migrate, seed twice, typecheck and run simulator tests. Each invocation creates its own database and stops it on exit; run only one at a time because port 55432 is reserved. To work against the app, run bash scripts/cloud/run.sh node node_modules/next/dist/bin/next dev --hostname 127.0.0.1 --port 3000 and keep that process alive. Never read or copy a private .env; all application configuration is synthetic and injected into the child process. This runner does not configure login or create an operator account, and it is not an end-to-end product acceptance test.",
+  "requiredSystemTools": ["bash", "node", "pnpm or corepack", "PostgreSQL 16 server binaries"],
+  "network": "Package registries during installation only; use loopback mocks for application providers",
+  "publication": "Configure Install script and Start skill in Codex Cloud setup, verify in Linux, then Publish; this JSON is not automatically consumed by Codex",
+  "verificationStatus": "Not executed in Codex Cloud; current authoring session is local macOS",
+  "localVerification": {
+    "node": "24.19.0 bundled with Codex; target Node 22 not tested here",
+    "pnpm": "11.25.0 available; differs from package.json 11.5.0; frozen installation not executed locally",
+    "postgres": "Disposable postgres:16-alpine Docker container, loopback port 55432, memory-backed data",
+    "migrations": "Existing migrator executed twice successfully",
+    "fixtures": "Seed executed twice successfully; 2 contacts, 2 leads, 2 test conversations, 2 KB entries, 1 inbound message, 1 disabled agent profile, 0 Meta credentials",
+    "typecheck": "Passed with --noEmit --incremental false",
+    "simulatorTests": "97 passed in 13 files",
+    "remaining": "Linux install/start scripts, frozen installation with Node 22 and pnpm 11.5.0, new Cloud task and publication must still be verified"
+  }
+}

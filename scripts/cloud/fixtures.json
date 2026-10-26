@@ -1,0 +1,12 @@
+{
+  "organization": { "id": "org_cloud_fixture", "name": "Coaching ficticio Cloud", "slug": "cloud-fixture" },
+  "agent": { "name": "Asistente de pruebas", "tone": "Claro y breve", "instructions": "Entorno ficticio para pruebas de infraestructura. Usa solo la KB sintética.", "enabled": false },
+  "kb": [
+    { "question": "¿Qué ofrece el servicio ficticio?", "answer": "Acompañamiento ficticio para organizar hábitos; no es una oferta comercial real." },
+    { "question": "¿Se garantizan resultados?", "answer": "No. Esta base es sintética y no promete resultados." }
+  ],
+  "leads": [
+    { "key": "opening", "name": "Lead sintético A", "source": "anuncio", "ficha": { "goal": "Organizar hábitos", "obstacles": "Falta de constancia", "country": "España", "ageRange": "35-44", "willingToInvest": true, "platform": "formulario-sintetico" }, "messages": [] },
+    { "key": "inbound", "name": "Lead sintético B", "source": "organico", "ficha": { "goal": "Ganar fuerza", "obstacles": "Horarios variables", "country": "México", "ageRange": "25-34", "willingToInvest": false, "platform": "formulario-sintetico" }, "messages": ["Me cuesta organizar mis horarios."] }
+  ]
+}
