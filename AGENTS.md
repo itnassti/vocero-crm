@@ -5,6 +5,46 @@ Laboratorio de auto-evaluación. Una instancia = un negocio. Este archivo guía 
 Codex (u otro asistente) para operar y **modificar** este repositorio —
 el caso típico: una agencia adaptando Vocero para un cliente.
 
+## AI Setter: contrato de desarrollo supervisado por hitos
+
+La prioridad actual es la beta AI Setter para coaches online, con conversaciones
+simuladas. Lee primero [spec](docs/AI_SETTER_SPEC.md),
+[backlog](docs/ROADMAP.md), [aceptación](docs/ACCEPTANCE_CRITERIA.md) y
+[ciclo autónomo](docs/AUTONOMOUS_DEVELOPMENT.md). Conserva las fronteras y
+reglas de Vocero descritas abajo; no conviertas la beta en un rediseño SaaS.
+
+- Solo selecciona tareas explícitamente aprobadas, con dependencias verificadas.
+  Aprobar este marco documental no aprueba ejecutar su backlog. La aprobación de
+  un hito autoriza sus incrementos técnicos descritos, no el siguiente hito.
+- Trabaja en incrementos pequeños, una tarea activa; corrige automáticamente
+  fallos dentro de ese alcance. Revisa el diff focalizado y deja evidencia.
+  No inventes requisitos, aprobaciones, pruebas ejecutadas ni resultados.
+- Prefiere Codebase Memory si está disponible: confirma proyecto/generación,
+  consulta símbolos y cobertura de rutas relevantes. No reindexes por rutina;
+  hazlo solo ante evidencia de índice insuficiente y dentro de autorización.
+  Si falta el MCP, registra la limitación y lee fuentes concretas. Evita repetir
+  auditorías completas; revisa solo cambios y dependencias materiales.
+- Conserva cambios ajenos o previos sin commit. No los atribuyas a tu tarea,
+  descartes ni incluyas automáticamente en commits o PR.
+- Ejecuta tests focalizados durante el incremento; antes de declarar una feature
+  hecha, cumple el gate técnico y el E2E con mocks exigidos abajo. No sustituyas
+  evidencia funcional por assertions sobre texto de prompts.
+- Registra decisiones, criterios, fallos, comandos y resultados en los artefactos
+  del hito; distingue implementado, verificado y aceptado por el dueño.
+- No uses datos reales de clientes sin aprobación. No envíes WhatsApp real,
+  despliegues a producción, modifiques secretos ni hagas merge automático a main.
+  Estas acciones quedan fuera del ciclo; requieren una instrucción humana nueva
+  y explícita. No solicites credenciales reales para pruebas deterministas.
+- Para AI Setter, la regla genérica de placeholders de credenciales de abajo
+  NO autoriza editar `.env` ni secretos: documenta la necesidad y deja que el
+  dueño gestione la configuración por un canal seguro.
+- No hagas instalaciones, commits, push, PR o cambios de infraestructura salvo
+  que estén incluidos en la autorización vigente. La revisión por PR es el
+  flujo propuesto; cada sesión debe respetar su autorización vigente.
+- Usa el carril SDD proporcional de la constitución (§ VI): ligero para nuevo
+  comportamiento interno; completo para migraciones/contratos publicados.
+  No ejecutes helpers que hagan commit automático si no está autorizado.
+
 ## Stack
 
 **Next.js 15 (App Router) + React 19** en monolito · TypeScript estricto
