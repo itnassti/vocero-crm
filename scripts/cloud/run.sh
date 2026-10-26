@@ -3,16 +3,62 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 [[ "$(uname -s)" == Linux ]] || { echo 'BLOCKED: this sandbox runner requires Linux Cloud.' >&2; exit 1; }
-command -v node >/dev/null || { echo 'BLOCKED: Node 22 is missing.' >&2; exit 1; }
-[[ "$(node -p 'process.versions.node.split(".")[0]')" == 22 ]] || { echo 'BLOCKED: Node 22 required.' >&2; exit 1; }
+# Preparation tools persist in Cloud, but its PATH does not persist across tasks.
+# Prefer an already-correct PATH; otherwise use only these known locations.
+cloud_tools=/workspace/.cloud-tools
+if ! command -v node >/dev/null || [[ "$(node -p 'process.versions.node.split(".")[0]')" != 22 ]]; then
+  export PATH="$cloud_tools/node22/node_modules/node/bin:$PATH"
+fi
+hash -r
+command -v node >/dev/null && [[ "$(node -p 'process.versions.node.split(".")[0]')" == 22 ]] || {
+  echo 'BLOCKED: Node 22 required in PATH or /workspace/.cloud-tools/node22.' >&2; exit 1;
+}
+if ! command -v pnpm >/dev/null || [[ "$(pnpm --version)" != 11.5.0 ]]; then
+  export PATH="$cloud_tools/node_modules/.bin:$PATH"
+fi
+hash -r
+command -v pnpm >/dev/null && [[ "$(pnpm --version)" == 11.5.0 ]] || {
+  echo 'BLOCKED: pnpm 11.5.0 required in PATH or /workspace/.cloud-tools/node_modules/.bin.' >&2; exit 1;
+}
 for file in .env .env.local .env.development .env.development.local; do
   [[ ! -e "$file" ]] || { echo "BLOCKED: private environment file present: $file. Use a clean Cloud checkout." >&2; exit 1; }
 done
-if [[ -x /usr/lib/postgresql/16/bin/initdb ]]; then
-  export PATH="/usr/lib/postgresql/16/bin:$PATH"
+pg16_ready() {
+  local tool
+  for tool in initdb pg_ctl postgres; do
+    command -v "$tool" >/dev/null && [[ "$("$tool" --version)" == *' 16.'* ]] || return 1
+  done
+}
+if ! pg16_ready; then
+  for pg_bin in /usr/lib/postgresql/16/bin "$cloud_tools/pg16/node_modules/@embedded-postgres/linux-x64/native/bin"; do
+    [[ -x "$pg_bin/initdb" && -x "$pg_bin/pg_ctl" && -x "$pg_bin/postgres" ]] || continue
+    export PATH="$pg_bin:$PATH"
+    hash -r
+    if pg16_ready; then break; fi
+  done
 fi
-command -v initdb >/dev/null && command -v pg_ctl >/dev/null || { echo 'BLOCKED: PostgreSQL 16 server tools missing.' >&2; exit 1; }
-[[ "$(initdb --version)" == *' 16.'* ]] || { echo 'BLOCKED: PostgreSQL 16 required.' >&2; exit 1; }
+pg16_ready || { echo 'BLOCKED: PostgreSQL 16 server tools required.' >&2; exit 1; }
+# The published embedded server omits clients. Its packaged createdb 17 is
+# compatible with server 16; accept only the known client majors 16 and 17.
+createdb_ready() {
+  command -v createdb >/dev/null && [[ "$(createdb --version)" =~ PostgreSQL\)\ (16|17)\. ]]
+}
+if ! createdb_ready; then
+  for pg_client_bin in /usr/lib/postgresql/16/bin "$cloud_tools/pg-client/usr/lib/postgresql/17/bin"; do
+    [[ -x "$pg_client_bin/createdb" ]] || continue
+    export PATH="$pg_client_bin:$PATH"
+    hash -r
+    if createdb_ready; then break; fi
+  done
+fi
+createdb_ready || { echo 'BLOCKED: compatible createdb client (16 or 17) required.' >&2; exit 1; }
+pg16_ready || { echo 'BLOCKED: client PATH must preserve PostgreSQL 16 server tools.' >&2; exit 1; }
+node --version
+pnpm --version
+initdb --version
+pg_ctl --version
+postgres --version
+createdb --version
 
 cluster="$(mktemp -d /tmp/ai-setter-cloud.XXXXXXXX)"
 pg_user=()
